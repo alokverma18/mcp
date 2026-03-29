@@ -33,6 +33,36 @@ pip install -r requirements.txt
 - Ask: "Show me octocat's repositories"
 - LLM will automatically call the MCP server tools
 
+## 🚀 Live Deployment
+
+This MCP server is deployed and available for testing at:
+- **URL**: `https://my-mcp.fastmcp.app/mcp`
+- **Status**: Production ready
+
+### Using the Deployed Server
+
+Configure Windsurf to use the deployed endpoint:
+```json
+{
+  "mcpServers": {
+    "github-mcp-deployed": {
+      "url": "https://my-mcp.fastmcp.app/mcp",
+      "disabled": false
+    }
+  }
+}
+```
+
+**Test the deployed server:**
+- Ask any LLM with MCP support: "Show me repositories for gn1264"
+- The deployed server will respond with GitHub data
+
+### Benefits of Deployed Server
+- ✅ No local Python environment required
+- ✅ Always available and reliable
+- ✅ Managed infrastructure
+- ✅ Same functionality as local version
+
 ## Testing (Optional)
 
 For development and testing:
