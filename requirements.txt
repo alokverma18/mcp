@@ -1,0 +1,5 @@
+fastmcp
+requests
+python-dotenv
+mcp
+openai
