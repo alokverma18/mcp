@@ -9,4 +9,4 @@ COPY . .
 
 EXPOSE 8000
 
-CMD ["python", "server/github_mcp_server.py"]
+CMD ["python", "server/github-remote.py"]
