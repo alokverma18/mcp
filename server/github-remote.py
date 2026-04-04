@@ -1,55 +1,50 @@
 import os
-import json
 import httpx
-from typing import Optional
-
 from fastmcp import FastMCP
-from fastapi import Request, Depends
+import anyio
 
 mcp = FastMCP("GitHub MCP Server")
 GITHUB_API_BASE = "https://api.github.com"
 
 
 # -------------------------
-# Dependency Injection
+# Auth (HEADER + ENV)
 # -------------------------
-def get_request(request: Request):
-    return request
+def _extract_token(ctx=None) -> str:
+    # 1. Try MCP headers (REMOTE)
+    if ctx:
+        try:
+            headers = ctx.request.headers
+            auth_header = headers.get("Authorization")
+            if auth_header and auth_header.startswith("Bearer "):
+                return auth_header.replace("Bearer ", "")
+        except Exception:
+            pass
 
-
-# -------------------------
-# Auth Helpers
-# -------------------------
-def _extract_token(request: Optional[Request] = None) -> str:
-    # 1. Try Authorization header (REMOTE MCP)
-    if request:
-        auth_header = request.headers.get("Authorization")
-        if auth_header and auth_header.startswith("Bearer "):
-            return auth_header.replace("Bearer ", "")
-
-    # 2. Fallback to env (LOCAL MCP)
+    # 2. Fallback (LOCAL)
     token = os.getenv("GITHUB_TOKEN")
     if token:
         return token
 
-    raise Exception("Missing GitHub token (no Authorization header or env var)")
+    raise Exception("Missing GitHub token")
 
 
-def _get_headers(request: Optional[Request] = None):
-    token = _extract_token(request)
-
+def _get_headers(ctx=None):
     return {
         "Accept": "application/vnd.github+json",
-        "Authorization": f"Bearer {token}",
+        "Authorization": f"Bearer {_extract_token(ctx)}",
     }
 
 
-async def _request(method: str, url: str, request: Optional[Request], **kwargs):
+# -------------------------
+# HTTP Helper
+# -------------------------
+async def _request(method: str, url: str, ctx=None, **kwargs):
     async with httpx.AsyncClient(timeout=15.0) as client:
         response = await client.request(
             method,
             url,
-            headers=_get_headers(request),
+            headers=_get_headers(ctx),
             **kwargs
         )
 
@@ -60,237 +55,50 @@ async def _request(method: str, url: str, request: Optional[Request], **kwargs):
 
 
 # -------------------------
-# Basic Tools
+# TOOL 1
 # -------------------------
-
 @mcp.tool()
-async def get_user_repos(
-    username: str,
-    request: Request = Depends(get_request)
-) -> str:
-    data, err = await _request("GET", f"{GITHUB_API_BASE}/users/{username}/repos", request)
+async def get_user_repos(username: str, ctx=None) -> str:
+    """Get public repositories of a GitHub user"""
+    data, err = await _request(
+        "GET",
+        f"{GITHUB_API_BASE}/users/{username}/repos",
+        ctx
+    )
     if err:
         return err
+
     return "\n".join([repo.get("name", "<unknown>") for repo in data])
 
 
+# -------------------------
+# TOOL 2
+# -------------------------
 @mcp.tool()
-async def get_repo_details(
-    owner: str,
-    repo: str,
-    request: Request = Depends(get_request)
-) -> str:
-    data, err = await _request("GET", f"{GITHUB_API_BASE}/repos/{owner}/{repo}", request)
-    if err:
-        return err
-
-    return json.dumps({
-        "name": data.get("full_name"),
-        "description": data.get("description"),
-        "language": data.get("language"),
-        "stars": data.get("stargazers_count"),
-        "forks": data.get("forks_count"),
-        "open_issues": data.get("open_issues_count"),
-    }, indent=2)
-
-
-@mcp.tool()
-async def get_repo_commits(
-    owner: str,
-    repo: str,
-    per_page: int = 5,
-    request: Request = Depends(get_request)
-) -> str:
+async def get_repo_details(owner: str, repo: str, ctx=None) -> str:
+    """Get repository details"""
     data, err = await _request(
         "GET",
-        f"{GITHUB_API_BASE}/repos/{owner}/{repo}/commits",
-        request,
-        params={"per_page": per_page}
+        f"{GITHUB_API_BASE}/repos/{owner}/{repo}",
+        ctx
     )
     if err:
         return err
-
-    return "\n".join([
-        f"{c['sha'][:7]}: {c['commit']['message'].splitlines()[0]}"
-        for c in data
-    ])
-
-
-@mcp.tool()
-async def get_repo_issues(
-    owner: str,
-    repo: str,
-    request: Request = Depends(get_request)
-) -> str:
-    data, err = await _request(
-        "GET",
-        f"{GITHUB_API_BASE}/repos/{owner}/{repo}/issues",
-        request
-    )
-    if err:
-        return err
-
-    return "\n".join([
-        f"{i['number']}: {i['title']}"
-        for i in data if not i.get("pull_request")
-    ])
-
-
-# -------------------------
-# Write Tools
-# -------------------------
-
-@mcp.tool()
-async def create_repo(
-    name: str,
-    description: Optional[str] = "",
-    private: bool = False,
-    request: Request = Depends(get_request)
-) -> str:
-    payload = {"name": name, "description": description, "private": private}
-    data, err = await _request("POST", f"{GITHUB_API_BASE}/user/repos", request, json=payload)
-    if err:
-        return err
-    return json.dumps({"created": data.get("full_name")})
-
-
-@mcp.tool()
-async def create_issue(
-    owner: str,
-    repo: str,
-    title: str,
-    body: Optional[str] = None,
-    request: Request = Depends(get_request)
-) -> str:
-    payload = {"title": title, "body": body}
-    data, err = await _request(
-        "POST",
-        f"{GITHUB_API_BASE}/repos/{owner}/{repo}/issues",
-        request,
-        json=payload
-    )
-    if err:
-        return err
-
-    return json.dumps({
-        "issue": data.get("number"),
-        "url": data.get("html_url")
-    })
-
-
-# -------------------------
-# WOW Tool 🚀 1
-# -------------------------
-
-@mcp.tool()
-async def summarize_repo(
-    owner: str,
-    repo: str,
-    request: Request = Depends(get_request)
-) -> str:
-    repo_data, err = await _request("GET", f"{GITHUB_API_BASE}/repos/{owner}/{repo}", request)
-    if err:
-        return err
-
-    commits, _ = await _request(
-        "GET",
-        f"{GITHUB_API_BASE}/repos/{owner}/{repo}/commits",
-        request,
-        params={"per_page": 5}
-    )
-
-    contributors, _ = await _request(
-        "GET",
-        f"{GITHUB_API_BASE}/repos/{owner}/{repo}/contributors",
-        request,
-        params={"per_page": 5}
-    )
 
     return f"""
-📦 {repo_data.get("full_name")}
-⭐ {repo_data.get("stargazers_count")} stars | 🍴 {repo_data.get("forks_count")} forks
-🧑‍💻 Language: {repo_data.get("language")}
-
-📝 {repo_data.get("description")}
-
-🚀 Recent commits:
-{chr(10).join(["- " + c["commit"]["message"].splitlines()[0] for c in (commits or [])])}
-
-👥 Top contributors:
-{chr(10).join(["- " + c["login"] for c in (contributors or [])])}
+Name: {data.get("full_name")}
+Description: {data.get("description")}
+Language: {data.get("language")}
+Stars: {data.get("stargazers_count")}
+Forks: {data.get("forks_count")}
 """.strip()
 
 
 # -------------------------
-# WOW Tool 🚀 2
+# ENTRYPOINT (REQUIRED FOR DEPLOY)
 # -------------------------
-
-@mcp.tool()
-async def analyze_pull_request(
-    owner: str,
-    repo: str,
-    pr_number: int,
-    request: Request = Depends(get_request)
-) -> str:
-    pr, err = await _request(
-        "GET",
-        f"{GITHUB_API_BASE}/repos/{owner}/{repo}/pulls/{pr_number}",
-        request
-    )
-    if err:
-        return err
-
-    files, _ = await _request(
-        "GET",
-        f"{GITHUB_API_BASE}/repos/{owner}/{repo}/pulls/{pr_number}/files",
-        request
-    )
-
-    return f"""
-🔀 PR #{pr.get("number")}: {pr.get("title")}
-👤 {pr.get("user", {}).get("login")}
-
-📊 +{pr.get("additions")} / -{pr.get("deletions")}
-📁 Files changed: {pr.get("changed_files")}
-
-📝 {pr.get("body") or "No description"}
-
-📂 Files:
-{chr(10).join([f"- {f['filename']}" for f in (files or [])[:10]])}
-""".strip()
-
-
-# -------------------------
-# Resource (no auth needed)
-# -------------------------
-
-@mcp.resource("file://github_info.txt")
-def get_github_info() -> str:
-    return """
-GitHub MCP Server
-
-- Uses GitHub REST API
-- Token passed via MCP headers
-- Supports repos, issues, commits, PRs
-- Includes smart analysis tools
-"""
-
-
-# -------------------------
-# Prompt (optional)
-# -------------------------
-
-@mcp.prompt("github_assistant")
-def github_prompt(user_query: str) -> str:
-    return f"""
-You are a GitHub assistant.
-
-User request: {user_query}
-
-- Use tools when needed
-- Prefer real data over assumptions
-- Keep responses concise
-"""
-
 if __name__ == "__main__":
-    mcp.run()
+    if os.getenv("MCP_TRANSPORT") == "local":
+        anyio.run(mcp.run_stdio_async)
+    else:
+        anyio.run(mcp.run_http_async, host="0.0.0.0", port=8000)
