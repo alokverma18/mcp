@@ -98,7 +98,4 @@ Forks: {data.get("forks_count")}
 # ENTRYPOINT (REQUIRED FOR DEPLOY)
 # -------------------------
 if __name__ == "__main__":
-    if os.getenv("MCP_TRANSPORT") == "local":
-        anyio.run(mcp.run_stdio_async)
-    else:
-        anyio.run(mcp.run_http_async, host="0.0.0.0", port=8000)
+    mcp.run()
