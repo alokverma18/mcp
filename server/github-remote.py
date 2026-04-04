@@ -11,22 +11,34 @@ GITHUB_API_BASE = "https://api.github.com"
 # Auth (HEADER + ENV)
 # -------------------------
 def _extract_token(ctx=None) -> str:
-    # 1. Try MCP headers (REMOTE)
+    # 1. Try MCP headers
     if ctx:
         try:
-            headers = ctx.request.headers
+            headers = getattr(ctx.request, "headers", {})
             auth_header = headers.get("Authorization")
             if auth_header and auth_header.startswith("Bearer "):
                 return auth_header.replace("Bearer ", "")
         except Exception:
             pass
 
-    # 2. Fallback (LOCAL)
+    # 2. Try query params (some clients send this way)
+    if ctx:
+        try:
+            query = getattr(ctx.request, "query_params", {})
+            token = query.get("token")
+            if token:
+                return token
+        except Exception:
+            pass
+
+    # 3. Fallback env (VERY IMPORTANT)
     token = os.getenv("GITHUB_TOKEN")
     if token:
         return token
 
-    raise Exception("Missing GitHub token")
+    raise Exception(
+        "Missing GitHub token. Pass via headers or set GITHUB_TOKEN env."
+    )
 
 
 def _get_headers(ctx=None):
@@ -93,6 +105,9 @@ Stars: {data.get("stargazers_count")}
 Forks: {data.get("forks_count")}
 """.strip()
 
+@mcp.resource("info://server")
+def info():
+    return "GitHub MCP server is running"
 
 # -------------------------
 # ENTRYPOINT (REQUIRED FOR DEPLOY)
