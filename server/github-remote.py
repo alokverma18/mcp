@@ -120,6 +120,10 @@ if __name__ == "__main__":
     else:
         async def run_http():
             port = int(os.getenv("PORT", 8000))
-            await mcp.run_http_async(host="0.0.0.0", port=port)
+            await mcp.run_http_async(
+                host="0.0.0.0",
+                port=port,
+                transport="sse"
+            )
 
         anyio.run(run_http)
